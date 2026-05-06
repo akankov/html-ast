@@ -1,0 +1,55 @@
+{
+  "name": "akankov/html-ast",
+  "description": "nikic/php-parser for HTML — an immutable HTML5 AST with positions, trivia, visitors, and a fidelity printer",
+  "keywords": [
+    "html",
+    "html5",
+    "ast",
+    "parser",
+    "visitor",
+    "printer",
+    "tokenizer"
+  ],
+  "type": "library",
+  "homepage": "https://github.com/akankov/html-ast",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Aleksei Kankov",
+      "email": "akankov@gmail.com",
+      "role": "Maintainer"
+    }
+  ],
+  "require": {
+    "php": "8.3.* || 8.4.* || 8.5.*",
+    "ext-dom": "*",
+    "ext-libxml": "*",
+    "ext-mbstring": "*"
+  },
+  "require-dev": {
+    "friendsofphp/php-cs-fixer": "^3.65",
+    "phan/phan": "^6.0",
+    "phpstan/phpstan": "^2.1",
+    "phpunit/phpunit": "^12.0",
+    "rector/rector": "^2.0"
+  },
+  "suggest": {
+    "masterminds/html5": "^2.9 — required by Akankov\\HtmlAst\\Parser\\MastermindsParser as the PHP 8.3 fallback parser. Not needed when running on PHP 8.4+, where the native \\Dom\\HTMLDocument backend is used."
+  },
+  "autoload": {
+    "psr-4": {
+      "Akankov\\HtmlAst\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Akankov\\HtmlAst\\Tests\\": "tests/"
+    }
+  },
+  "config": {
+    "platform": {
+      "php": "8.3"
+    },
+    "sort-packages": true
+  }
+}
