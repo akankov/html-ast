@@ -10,6 +10,25 @@ frozen in production for at least two months.
 
 ## [Unreleased]
 
+### Added
+
+- **M1.A: WHATWG HTML5 tokenizer with round-trip fidelity.**
+  `Akankov\HtmlAst\Internal\Tokenizer\Tokenizer` produces a `TokenStream`
+  where the concat of every token's `$raw` byte-for-byte equals the input —
+  the differentiator from `\Dom\HTMLDocument` per PLAN §1.
+- `Token` is now `abstract readonly` with eight subclasses
+  (`StartTagToken`, `EndTagToken`, `CharacterToken`, `WhitespaceToken`,
+  `CommentToken`, `DoctypeToken`, `CdataToken`, `EndOfFileToken`) plus
+  `TokenAttribute` for tag attribute carrying. Each token kind is its own
+  type for `instanceof` narrowing in PHPStan and Phan.
+- Seed character-reference table (~30 entities) plus full numeric-reference
+  decoding (named, decimal, hexadecimal) with the WHATWG C1-control
+  replacement table. Full ~2200-entry named table backfills in M1.B.
+- Round-trip baseline test: 10 fixtures in `tests/fixtures/tokenizer/`
+  covering empty input, text, all four attribute quote styles, comments,
+  DOCTYPE, CDATA in foreign content, script-data state, character
+  references, malformed-tag recovery, and SVG.
+
 ## [0.0.1] — 2026-05-06
 
 > **Scaffold marker, not a usable release.** Every implementation class

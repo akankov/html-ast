@@ -32,6 +32,15 @@ final class SmokeTest extends TestCase
             \Akankov\HtmlAst\Token\Token::class,
             \Akankov\HtmlAst\Token\TokenStream::class,
             \Akankov\HtmlAst\Token\TokenKind::class,
+            \Akankov\HtmlAst\Token\TokenAttribute::class,
+            \Akankov\HtmlAst\Token\StartTagToken::class,
+            \Akankov\HtmlAst\Token\EndTagToken::class,
+            \Akankov\HtmlAst\Token\CharacterToken::class,
+            \Akankov\HtmlAst\Token\WhitespaceToken::class,
+            \Akankov\HtmlAst\Token\CommentToken::class,
+            \Akankov\HtmlAst\Token\DoctypeToken::class,
+            \Akankov\HtmlAst\Token\CdataToken::class,
+            \Akankov\HtmlAst\Token\EndOfFileToken::class,
 
             // Node
             \Akankov\HtmlAst\Node\Node::class,
