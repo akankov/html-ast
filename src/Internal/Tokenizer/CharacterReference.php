@@ -28,24 +28,20 @@ final class CharacterReference
      */
     public static function matchNamed(string $input, int $startOffset): ?array
     {
-        $table = Entities::table();
+        // Longest match by probing candidate lengths downward. Bounded by the
+        // longest table key (33 bytes), this is ≤31 hash lookups per `&` —
+        // unlike a table scan, it stays O(1) in the table size, which matters
+        // now that the table holds the full ~2200-entry WHATWG list.
+        $longest = min(NamedCharacterReferences::MAX_LENGTH, \strlen($input) - $startOffset);
 
-        $bestMatchLen = 0;
-        $bestDecoded = '';
-
-        foreach ($table as $name => $decoded) {
-            $nameLen = \strlen($name);
-            if (substr($input, $startOffset, $nameLen) === $name && $nameLen > $bestMatchLen) {
-                $bestMatchLen = $nameLen;
-                $bestDecoded = $decoded;
+        for ($length = $longest; $length >= NamedCharacterReferences::MIN_LENGTH; --$length) {
+            $candidate = substr($input, $startOffset, $length);
+            if (isset(NamedCharacterReferences::TABLE[$candidate])) {
+                return ['consumed' => $length, 'decoded' => NamedCharacterReferences::TABLE[$candidate]];
             }
         }
 
-        if ($bestMatchLen === 0) {
-            return null;
-        }
-
-        return ['consumed' => $bestMatchLen, 'decoded' => $bestDecoded];
+        return null;
     }
 
     /**

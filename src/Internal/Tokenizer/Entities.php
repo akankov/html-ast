@@ -7,12 +7,12 @@ namespace Akankov\HtmlAst\Internal\Tokenizer;
 /**
  * Named character reference table.
  *
- * **M1.A scope:** seed table covering ~30 commonly-used entities. The full
- * WHATWG spec table has ~2200 entries; the rest will be backfilled from the
- * canonical `entities.json` in M1.B (see CREDITS.md). Round-trip fidelity
- * does **not** depend on this table being complete — unrecognized references
- * are emitted as literal `CharacterToken`s with their original source bytes
- * intact, exactly as the spec mandates.
+ * **M1.B:** the full ~2200-entry WHATWG table lives in the generated
+ * {@see NamedCharacterReferences} (regenerate via `bin/generate-entities.php`
+ * from `resources/entities.json`; see CREDITS.md). Round-trip fidelity does
+ * **not** depend on this table — unrecognized references are emitted as
+ * literal `CharacterToken`s with their original source bytes intact, exactly
+ * as the spec mandates.
  *
  * Some entries omit the trailing semicolon — the WHATWG list calls these
  * legacy named references; matching is "longest match" so `&AMP` on its own
@@ -26,57 +26,11 @@ namespace Akankov\HtmlAst\Internal\Tokenizer;
 final class Entities
 {
     /**
-     * @return array<string, string> name (with leading & and trailing ;) → decoded UTF-8 value
+     * @return array<string, string> name (with leading & and optional trailing ;) → decoded UTF-8 value
      */
     public static function table(): array
     {
-        return [
-            // Fundamentals — XML's "predefined entities"
-            '&amp;' => '&',
-            '&AMP;' => '&',
-            '&AMP' => '&',
-            '&amp' => '&',
-            '&lt;' => '<',
-            '&LT;' => '<',
-            '&LT' => '<',
-            '&lt' => '<',
-            '&gt;' => '>',
-            '&GT;' => '>',
-            '&GT' => '>',
-            '&gt' => '>',
-            '&quot;' => '"',
-            '&QUOT;' => '"',
-            '&QUOT' => '"',
-            '&quot' => '"',
-            '&apos;' => "'",
-            // Common typography
-            '&copy;' => "\u{00A9}",
-            '&COPY;' => "\u{00A9}",
-            '&copy' => "\u{00A9}",
-            '&COPY' => "\u{00A9}",
-            '&reg;' => "\u{00AE}",
-            '&REG;' => "\u{00AE}",
-            '&reg' => "\u{00AE}",
-            '&REG' => "\u{00AE}",
-            '&trade;' => "\u{2122}",
-            '&TRADE;' => "\u{2122}",
-            '&nbsp;' => "\u{00A0}",
-            '&nbsp' => "\u{00A0}",
-            '&mdash;' => "\u{2014}",
-            '&ndash;' => "\u{2013}",
-            '&hellip;' => "\u{2026}",
-            '&laquo;' => "\u{00AB}",
-            '&raquo;' => "\u{00BB}",
-            '&ldquo;' => "\u{201C}",
-            '&rdquo;' => "\u{201D}",
-            '&lsquo;' => "\u{2018}",
-            '&rsquo;' => "\u{2019}",
-            // Math
-            '&times;' => "\u{00D7}",
-            '&divide;' => "\u{00F7}",
-            '&plusmn;' => "\u{00B1}",
-            '&deg;' => "\u{00B0}",
-        ];
+        return NamedCharacterReferences::TABLE;
     }
 
     /**
