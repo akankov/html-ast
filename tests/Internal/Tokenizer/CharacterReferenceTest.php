@@ -7,6 +7,7 @@ namespace Akankov\HtmlAst\Tests\Internal\Tokenizer;
 use Akankov\HtmlAst\Internal\Tokenizer\CharacterReference;
 use Akankov\HtmlAst\Internal\Tokenizer\NamedCharacterReferences;
 use Akankov\HtmlAst\Internal\Tokenizer\Tokenizer;
+use Akankov\HtmlAst\Internal\Tokenizer\TokenizerError;
 use Akankov\HtmlAst\Token\CharacterToken;
 use Akankov\HtmlAst\Token\StartTagToken;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -17,6 +18,13 @@ use PHPUnit\Framework\TestCase;
  * that only matter once the table is complete — longest-match against legacy
  * (semicolon-less) names, the historical attribute-value exception
  * (§13.2.5.73), and the missing-semicolon parse error.
+ *
+ * @phan-file-suppress PhanAccessClassConstantInternal, PhanAccessMethodInternal, PhanAccessPropertyInternal
+ *     This test exercises `Internal\` classes directly — legitimate from the
+ *     package's own suite; Phan has no notion of "tests belong to the package".
+ * @phan-file-suppress PhanTypeInvalidDimOffset
+ *     Phan caps array-shape inference on the 2231-entry TABLE constant, so
+ *     keys outside its sample look like invalid offsets.
  */
 #[CoversClass(CharacterReference::class)]
 #[CoversClass(NamedCharacterReferences::class)]
@@ -111,7 +119,7 @@ final class CharacterReferenceTest extends TestCase
         self::assertSame("x\u{00A9}!", $tag->attributes[0]->value);
         self::assertContains(
             'missing-semicolon-after-character-reference',
-            array_map(static fn ($error): string => $error->code, $tokenizer->errors()),
+            array_map(static fn (TokenizerError $error): string => $error->code, $tokenizer->errors()),
         );
     }
 
@@ -128,7 +136,7 @@ final class CharacterReferenceTest extends TestCase
         self::assertSame('x&copy!', $text->raw);
         self::assertContains(
             'missing-semicolon-after-character-reference',
-            array_map(static fn ($error): string => $error->code, $tokenizer->errors()),
+            array_map(static fn (TokenizerError $error): string => $error->code, $tokenizer->errors()),
         );
     }
 }
