@@ -17,6 +17,12 @@ final readonly class WhitespaceToken extends Token
     public function __construct(
         ByteRange $range,
         string $raw,
+        /**
+         * Decoded whitespace. Usually identical to $raw, but differs when a
+         * character reference decoded to whitespace (`&Tab;` → "\t") — raw
+         * keeps the source bytes, this keeps what they mean.
+         */
+        public string $data,
     ) {
         parent::__construct(TokenKind::Whitespace, $range, $raw);
     }

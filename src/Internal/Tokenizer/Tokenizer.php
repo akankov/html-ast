@@ -31,13 +31,13 @@ use Akankov\HtmlAst\Token\WhitespaceToken;
  * - Adjusted-current-node-is-foreign tracking. CDATA sections are
  *   tokenized whenever encountered; the tree builder will reject them
  *   inside HTML proper.
- * - Full WHATWG named-character-reference table (~2200 entries). M1.A
- *   ships ~30 common entities; the round-trip baseline does not depend
- *   on the table being complete (unrecognized refs round-trip as their
- *   literal source bytes).
- * - The complete tokenizer-error catalog. M1.A emits a handful of common
- *   codes; the rest get filled in as the html5lib-tests conformance
- *   suite is wired up.
+ * - CR/CRLF → LF input normalization and the per-state NUL → U+FFFD
+ *   replacements (the spec's input-preprocessing layer) — land with M1.C;
+ *   the affected html5lib cases are skip-listed with reasons in
+ *   tests/Conformance/Html5libTokenizerTest.php.
+ * - The complete tokenizer-error catalog. Common codes are emitted; the
+ *   rest get filled in when the conformance suite starts comparing error
+ *   codes (it currently compares token sequences only).
  *
  * No BC guarantees — the `Internal\` namespace is excluded from semver per
  * the project convention. Code outside this package should not depend on
@@ -50,6 +50,9 @@ final class Tokenizer
     private int $pos;
     private TokenizerState $state;
     private TokenizerState $returnState;
+
+    /** Whether the most recent consume() advanced $pos (false at EOF) — see reconsume(). */
+    private bool $lastConsumeAdvanced = false;
 
     /** @var list<\Akankov\HtmlAst\Token\Token> */
     private array $tokens;
@@ -91,6 +94,7 @@ final class Tokenizer
         $this->returnState = TokenizerState::Data;
         $this->tokens = [];
         $this->errors = [];
+        $this->lastConsumeAdvanced = false;
         $this->currentTag = null;
         $this->currentDoctype = null;
         $this->currentCommentData = '';
@@ -145,10 +149,22 @@ final class Tokenizer
             TokenizerState::Comment => $this->stateComment(),
             TokenizerState::CommentEndDash => $this->stateCommentEndDash(),
             TokenizerState::CommentEnd => $this->stateCommentEnd(),
+            TokenizerState::CommentEndBang => $this->stateCommentEndBang(),
             TokenizerState::Doctype => $this->stateDoctype(),
             TokenizerState::BeforeDoctypeName => $this->stateBeforeDoctypeName(),
             TokenizerState::DoctypeName => $this->stateDoctypeName(),
             TokenizerState::AfterDoctypeName => $this->stateAfterDoctypeName(),
+            TokenizerState::AfterDoctypePublicKeyword => $this->stateAfterDoctypePublicKeyword(),
+            TokenizerState::BeforeDoctypePublicIdentifier => $this->stateBeforeDoctypePublicIdentifier(),
+            TokenizerState::DoctypePublicIdentifierDoubleQuoted => $this->stateDoctypePublicIdentifierQuoted('"'),
+            TokenizerState::DoctypePublicIdentifierSingleQuoted => $this->stateDoctypePublicIdentifierQuoted("'"),
+            TokenizerState::AfterDoctypePublicIdentifier => $this->stateAfterDoctypePublicIdentifier(),
+            TokenizerState::BetweenDoctypePublicAndSystemIdentifiers => $this->stateBetweenDoctypePublicAndSystemIdentifiers(),
+            TokenizerState::AfterDoctypeSystemKeyword => $this->stateAfterDoctypeSystemKeyword(),
+            TokenizerState::BeforeDoctypeSystemIdentifier => $this->stateBeforeDoctypeSystemIdentifier(),
+            TokenizerState::DoctypeSystemIdentifierDoubleQuoted => $this->stateDoctypeSystemIdentifierQuoted('"'),
+            TokenizerState::DoctypeSystemIdentifierSingleQuoted => $this->stateDoctypeSystemIdentifierQuoted("'"),
+            TokenizerState::AfterDoctypeSystemIdentifier => $this->stateAfterDoctypeSystemIdentifier(),
             TokenizerState::BogusDoctype => $this->stateBogusDoctype(),
             TokenizerState::ScriptData => $this->stateScriptData(),
             TokenizerState::ScriptDataLessThanSign => $this->stateScriptDataLessThanSign(),
@@ -176,15 +192,30 @@ final class Tokenizer
     private function consume(): ?string
     {
         if ($this->pos >= $this->length) {
+            $this->lastConsumeAdvanced = false;
+
             return null;
         }
+
+        $this->lastConsumeAdvanced = true;
 
         return $this->input[$this->pos++];
     }
 
+    /**
+     * Undo the advancement of the immediately-preceding {@see consume()}.
+     *
+     * The spec's "reconsume in state X" with EOF as the current input
+     * character means state X also sees EOF — it does NOT mean stepping back
+     * in the buffer. A null consume() never advanced, so rewinding after one
+     * would re-tokenize the last real character (a bare `&` at EOF used to
+     * loop Data → CharacterReference forever, appending '&' until OOM).
+     */
     private function reconsume(): void
     {
-        --$this->pos;
+        if ($this->lastConsumeAdvanced) {
+            --$this->pos;
+        }
     }
 
     private function startsWithCaseInsensitive(string $needle): bool
@@ -231,7 +262,7 @@ final class Tokenizer
         $range = new ByteRange($this->textStart, $this->textStart + \strlen($this->textRaw));
 
         if ($this->textIsWhitespaceOnly) {
-            $this->tokens[] = new WhitespaceToken($range, $this->textRaw);
+            $this->tokens[] = new WhitespaceToken($range, $this->textRaw, $this->textData);
         } else {
             $this->tokens[] = new CharacterToken($range, $this->textRaw, $this->textData);
         }
@@ -933,6 +964,12 @@ final class Tokenizer
             return true;
         }
 
+        if ($c === '!') {
+            $this->state = TokenizerState::CommentEndBang;
+
+            return true;
+        }
+
         if ($c === '-') {
             $this->currentCommentData .= '-';
 
@@ -940,6 +977,41 @@ final class Tokenizer
         }
 
         $this->currentCommentData .= '--';
+        $this->reconsume();
+        $this->state = TokenizerState::Comment;
+
+        return true;
+    }
+
+    /**
+     * §13.2.5.52 — comment end bang state (`<!--x--!`).
+     */
+    private function stateCommentEndBang(): bool
+    {
+        $c = $this->consume();
+        if ($c === null) {
+            $this->emitError('eof-in-comment', 'eof-in-comment');
+            $this->emitCommentToken();
+
+            return false;
+        }
+
+        if ($c === '-') {
+            $this->currentCommentData .= '--!';
+            $this->state = TokenizerState::CommentEndDash;
+
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitError('incorrectly-closed-comment', 'incorrectly-closed-comment');
+            $this->emitCommentToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        $this->currentCommentData .= '--!';
         $this->reconsume();
         $this->state = TokenizerState::Comment;
 
@@ -1059,13 +1131,382 @@ final class Tokenizer
             return true;
         }
 
-        // M1.A skips PUBLIC/SYSTEM identifier parsing — go to bogus doctype.
+        // §13.2.5.56: match the PUBLIC / SYSTEM keywords ASCII
+        // case-insensitively, starting from the character just consumed.
+        $this->reconsume();
+        if ($this->startsWithCaseInsensitive('PUBLIC')) {
+            $this->pos += 6;
+            $this->state = TokenizerState::AfterDoctypePublicKeyword;
+
+            return true;
+        }
+
+        if ($this->startsWithCaseInsensitive('SYSTEM')) {
+            $this->pos += 6;
+            $this->state = TokenizerState::AfterDoctypeSystemKeyword;
+
+            return true;
+        }
+
         $this->emitError('invalid-character-sequence-after-doctype-name', 'invalid-character-sequence-after-doctype-name');
+        $dt->forceQuirks = true;
+        $this->state = TokenizerState::BogusDoctype;
+
+        return true;
+    }
+
+    private function stateAfterDoctypePublicKeyword(): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if (AsciiPredicates::isWhitespace($c)) {
+            $this->state = TokenizerState::BeforeDoctypePublicIdentifier;
+
+            return true;
+        }
+
+        if ($c === '"' || $c === "'") {
+            $this->emitError('missing-whitespace-after-doctype-public-keyword', 'missing-whitespace-after-doctype-public-keyword');
+            $dt->publicId = '';
+            $this->state = $c === '"'
+                ? TokenizerState::DoctypePublicIdentifierDoubleQuoted
+                : TokenizerState::DoctypePublicIdentifierSingleQuoted;
+
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitError('missing-doctype-public-identifier', 'missing-doctype-public-identifier');
+            $dt->forceQuirks = true;
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        $this->emitError('missing-quote-before-doctype-public-identifier', 'missing-quote-before-doctype-public-identifier');
         $dt->forceQuirks = true;
         $this->reconsume();
         $this->state = TokenizerState::BogusDoctype;
 
         return true;
+    }
+
+    private function stateBeforeDoctypePublicIdentifier(): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if (AsciiPredicates::isWhitespace($c)) {
+            return true;
+        }
+
+        if ($c === '"' || $c === "'") {
+            $dt->publicId = '';
+            $this->state = $c === '"'
+                ? TokenizerState::DoctypePublicIdentifierDoubleQuoted
+                : TokenizerState::DoctypePublicIdentifierSingleQuoted;
+
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitError('missing-doctype-public-identifier', 'missing-doctype-public-identifier');
+            $dt->forceQuirks = true;
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        $this->emitError('missing-quote-before-doctype-public-identifier', 'missing-quote-before-doctype-public-identifier');
+        $dt->forceQuirks = true;
+        $this->reconsume();
+        $this->state = TokenizerState::BogusDoctype;
+
+        return true;
+    }
+
+    /**
+     * §13.2.5.60/.61 — DOCTYPE public identifier (double- / single-quoted),
+     * parameterized on the closing quote; the two states differ only there.
+     */
+    private function stateDoctypePublicIdentifierQuoted(string $quote): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if ($c === $quote) {
+            $this->state = TokenizerState::AfterDoctypePublicIdentifier;
+
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitError('abrupt-doctype-public-identifier', 'abrupt-doctype-public-identifier');
+            $dt->forceQuirks = true;
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        if ($c === "\0") {
+            $this->emitError('unexpected-null-character', 'unexpected-null-character');
+            $c = "\u{FFFD}";
+        }
+
+        $dt->publicId .= $c;
+
+        return true;
+    }
+
+    private function stateAfterDoctypePublicIdentifier(): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if (AsciiPredicates::isWhitespace($c)) {
+            $this->state = TokenizerState::BetweenDoctypePublicAndSystemIdentifiers;
+
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        if ($c === '"' || $c === "'") {
+            $this->emitError('missing-whitespace-between-doctype-public-and-system-identifiers', 'missing-whitespace-between-doctype-public-and-system-identifiers');
+            $dt->systemId = '';
+            $this->state = $c === '"'
+                ? TokenizerState::DoctypeSystemIdentifierDoubleQuoted
+                : TokenizerState::DoctypeSystemIdentifierSingleQuoted;
+
+            return true;
+        }
+
+        $this->emitError('missing-quote-before-doctype-system-identifier', 'missing-quote-before-doctype-system-identifier');
+        $dt->forceQuirks = true;
+        $this->reconsume();
+        $this->state = TokenizerState::BogusDoctype;
+
+        return true;
+    }
+
+    private function stateBetweenDoctypePublicAndSystemIdentifiers(): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if (AsciiPredicates::isWhitespace($c)) {
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        if ($c === '"' || $c === "'") {
+            $dt->systemId = '';
+            $this->state = $c === '"'
+                ? TokenizerState::DoctypeSystemIdentifierDoubleQuoted
+                : TokenizerState::DoctypeSystemIdentifierSingleQuoted;
+
+            return true;
+        }
+
+        $this->emitError('missing-quote-before-doctype-system-identifier', 'missing-quote-before-doctype-system-identifier');
+        $dt->forceQuirks = true;
+        $this->reconsume();
+        $this->state = TokenizerState::BogusDoctype;
+
+        return true;
+    }
+
+    private function stateAfterDoctypeSystemKeyword(): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if (AsciiPredicates::isWhitespace($c)) {
+            $this->state = TokenizerState::BeforeDoctypeSystemIdentifier;
+
+            return true;
+        }
+
+        if ($c === '"' || $c === "'") {
+            $this->emitError('missing-whitespace-after-doctype-system-keyword', 'missing-whitespace-after-doctype-system-keyword');
+            $dt->systemId = '';
+            $this->state = $c === '"'
+                ? TokenizerState::DoctypeSystemIdentifierDoubleQuoted
+                : TokenizerState::DoctypeSystemIdentifierSingleQuoted;
+
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitError('missing-doctype-system-identifier', 'missing-doctype-system-identifier');
+            $dt->forceQuirks = true;
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        $this->emitError('missing-quote-before-doctype-system-identifier', 'missing-quote-before-doctype-system-identifier');
+        $dt->forceQuirks = true;
+        $this->reconsume();
+        $this->state = TokenizerState::BogusDoctype;
+
+        return true;
+    }
+
+    private function stateBeforeDoctypeSystemIdentifier(): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if (AsciiPredicates::isWhitespace($c)) {
+            return true;
+        }
+
+        if ($c === '"' || $c === "'") {
+            $dt->systemId = '';
+            $this->state = $c === '"'
+                ? TokenizerState::DoctypeSystemIdentifierDoubleQuoted
+                : TokenizerState::DoctypeSystemIdentifierSingleQuoted;
+
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitError('missing-doctype-system-identifier', 'missing-doctype-system-identifier');
+            $dt->forceQuirks = true;
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        $this->emitError('missing-quote-before-doctype-system-identifier', 'missing-quote-before-doctype-system-identifier');
+        $dt->forceQuirks = true;
+        $this->reconsume();
+        $this->state = TokenizerState::BogusDoctype;
+
+        return true;
+    }
+
+    /**
+     * §13.2.5.64/.65 — DOCTYPE system identifier (double- / single-quoted).
+     */
+    private function stateDoctypeSystemIdentifierQuoted(string $quote): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if ($c === $quote) {
+            $this->state = TokenizerState::AfterDoctypeSystemIdentifier;
+
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitError('abrupt-doctype-system-identifier', 'abrupt-doctype-system-identifier');
+            $dt->forceQuirks = true;
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        if ($c === "\0") {
+            $this->emitError('unexpected-null-character', 'unexpected-null-character');
+            $c = "\u{FFFD}";
+        }
+
+        $dt->systemId .= $c;
+
+        return true;
+    }
+
+    private function stateAfterDoctypeSystemIdentifier(): bool
+    {
+        \assert($this->currentDoctype !== null);
+        $dt = $this->currentDoctype;
+        $c = $this->consume();
+        if ($c === null) {
+            return $this->doctypeEof($dt);
+        }
+
+        if (AsciiPredicates::isWhitespace($c)) {
+            return true;
+        }
+
+        if ($c === '>') {
+            $this->emitDoctypeToken();
+            $this->state = TokenizerState::Data;
+
+            return true;
+        }
+
+        // Spec: an error, but does NOT set force-quirks.
+        $this->emitError('unexpected-character-after-doctype-system-identifier', 'unexpected-character-after-doctype-system-identifier');
+        $this->reconsume();
+        $this->state = TokenizerState::BogusDoctype;
+
+        return true;
+    }
+
+    /**
+     * Shared §13.2.5 EOF-in-doctype handling: error, force quirks, emit.
+     */
+    private function doctypeEof(CurrentDoctype $dt): bool
+    {
+        $this->emitError('eof-in-doctype', 'eof-in-doctype');
+        $dt->forceQuirks = true;
+        $this->emitDoctypeToken();
+
+        return false;
     }
 
     private function stateBogusDoctype(): bool
@@ -1441,10 +1882,12 @@ final class Tokenizer
         $c = $this->consume();
         if ($c === null || ! AsciiPredicates::isAsciiHexDigit($c)) {
             $this->emitError('absence-of-digits-in-numeric-character-reference', 'absence-of-digits-in-numeric-character-reference');
-            $this->appendInReturnState('&#x', '&#x');
             if ($c !== null) {
                 $this->reconsume();
             }
+            // Flush the code points actually consumed — '&#x' or '&#X'.
+            $consumedRaw = substr($this->input, $this->pos - 3, 3);
+            $this->appendInReturnState($consumedRaw, $consumedRaw);
             $this->state = $this->returnState;
 
             return true;
@@ -1487,19 +1930,19 @@ final class Tokenizer
         }
 
         if (AsciiPredicates::isAsciiDigit($c)) {
-            $this->charRefCode = $this->charRefCode * 16 + (\ord($c) - 0x30);
+            $this->charRefCode = min($this->charRefCode * 16 + (\ord($c) - 0x30), 0x110000);
 
             return true;
         }
 
         if ($c >= 'A' && $c <= 'F') {
-            $this->charRefCode = $this->charRefCode * 16 + (\ord($c) - 0x37);
+            $this->charRefCode = min($this->charRefCode * 16 + (\ord($c) - 0x37), 0x110000);
 
             return true;
         }
 
         if ($c >= 'a' && $c <= 'f') {
-            $this->charRefCode = $this->charRefCode * 16 + (\ord($c) - 0x57);
+            $this->charRefCode = min($this->charRefCode * 16 + (\ord($c) - 0x57), 0x110000);
 
             return true;
         }
@@ -1528,7 +1971,7 @@ final class Tokenizer
         }
 
         if (AsciiPredicates::isAsciiDigit($c)) {
-            $this->charRefCode = $this->charRefCode * 10 + (\ord($c) - 0x30);
+            $this->charRefCode = min($this->charRefCode * 10 + (\ord($c) - 0x30), 0x110000);
 
             return true;
         }

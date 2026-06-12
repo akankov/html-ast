@@ -12,6 +12,19 @@ frozen in production for at least two months.
 
 ### Added
 
+- **M1.B (part 2): html5lib-tests tokenizer conformance suite.** 6,806 cases
+  vendored from html5lib/html5lib-tests (`tests/fixtures/html5lib-tokenizer/`,
+  refreshable via `bin/fetch-html5lib-tests.php`); 6,690 run (Data state, no
+  `lastStartTag`), **6,651 pass**, 39 are skip-listed with reasons (CR/CRLF
+  input normalization and per-state NUL → U+FFFD replacement, both M1.C).
+  Token sequences are compared; error-code comparison is the follow-up.
+- **DOCTYPE public/system identifier states (§13.2.5.56–.66).** The M1.A
+  shortcut sent everything after the doctype name to bogus-doctype with
+  force-quirks; `<!DOCTYPE html PUBLIC "…" "…">` now parses its identifiers
+  (case-insensitive PUBLIC/SYSTEM keywords, all four quoting states, the
+  between/after states, spec error codes). Cleared ~317 conformance cases.
+- **Comment-end-bang state (§13.2.5.52).** `<!--x--!>` and friends now
+  follow the spec (`incorrectly-closed-comment`, `--!` data append).
 - **M1.B (part 1): full WHATWG named-character-reference table.** The
   generated `Internal\Tokenizer\NamedCharacterReferences` holds all 2231
   entries, codegen'd by `bin/generate-entities.php` from the vendored
@@ -19,8 +32,7 @@ frozen in production for at least two months.
   `CharacterReference::matchNamed()` switched from a table scan to a
   longest-match probe over descending candidate lengths (≤31 hash lookups
   per `&`, O(1) in table size) to stay inside the committed performance
-  budget. The tokenizer error catalog completes alongside the html5lib
-  conformance suite (M1.B part 2).
+  budget.
 - **Attribute-value character-reference rules (WHATWG §13.2.5.73).** A
   legacy (semicolon-less) named match inside an attribute value followed by
   `=` or an alphanumeric now stays literal (`?x=1&copy=2` keeps `&copy`),
@@ -35,13 +47,28 @@ frozen in production for at least two months.
   `CommentToken`, `DoctypeToken`, `CdataToken`, `EndOfFileToken`) plus
   `TokenAttribute` for tag attribute carrying. Each token kind is its own
   type for `instanceof` narrowing in PHPStan and Phan.
-- Seed character-reference table (~30 entities) plus full numeric-reference
-  decoding (named, decimal, hexadecimal) with the WHATWG C1-control
-  replacement table. Full ~2200-entry named table backfills in M1.B.
+- Full numeric-reference decoding (named, decimal, hexadecimal) with the
+  WHATWG C1-control replacement table.
 - Round-trip baseline test: 10 fixtures in `tests/fixtures/tokenizer/`
   covering empty input, text, all four attribute quote styles, comments,
   DOCTYPE, CDATA in foreign content, script-data state, character
   references, malformed-tag recovery, and SVG.
+
+### Fixed
+
+- **Bare `&` at EOF looped until OOM.** `reconsume()` rewound the buffer
+  even when the preceding `consume()` returned EOF without advancing, so
+  Data → CharacterReference re-consumed the same `&` forever. `reconsume()`
+  now only undoes an advancing consume — the spec's "reconsume EOF" means
+  the next state sees EOF too. Found by the conformance suite's 47th case.
+- **`WhitespaceToken` lost the decoded form.** Entities that decode to
+  whitespace (`&Tab;`, `&#10;`) flushed as whitespace-only runs carrying
+  only the raw bytes; the token now exposes `$data` alongside `$raw`.
+- **Numeric character references above the int range crashed.** 65-bit
+  references (`&#x10000000000000041;`) overflowed the accumulator to float;
+  accumulation now saturates at 0x110000, which decodes to U+FFFD per spec.
+- **`&#X` (uppercase) flushed as lowercase `&#x`** when no hex digits
+  followed; the actually-consumed code points are flushed now.
 
 ## [0.0.1] — 2026-05-06
 
