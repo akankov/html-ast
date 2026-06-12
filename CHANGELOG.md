@@ -12,6 +12,20 @@ frozen in production for at least two months.
 
 ### Added
 
+- **M1.B (part 1): full WHATWG named-character-reference table.** The
+  generated `Internal\Tokenizer\NamedCharacterReferences` holds all 2231
+  entries, codegen'd by `bin/generate-entities.php` from the vendored
+  `resources/entities.json` (canonical WHATWG data, sha256-stamped).
+  `CharacterReference::matchNamed()` switched from a table scan to a
+  longest-match probe over descending candidate lengths (≤31 hash lookups
+  per `&`, O(1) in table size) to stay inside the committed performance
+  budget. The tokenizer error catalog completes alongside the html5lib
+  conformance suite (M1.B part 2).
+- **Attribute-value character-reference rules (WHATWG §13.2.5.73).** A
+  legacy (semicolon-less) named match inside an attribute value followed by
+  `=` or an alphanumeric now stays literal (`?x=1&copy=2` keeps `&copy`),
+  and semicolon-less matches elsewhere emit the spec's
+  `missing-semicolon-after-character-reference` parse error.
 - **M1.A: WHATWG HTML5 tokenizer with round-trip fidelity.**
   `Akankov\HtmlAst\Internal\Tokenizer\Tokenizer` produces a `TokenStream`
   where the concat of every token's `$raw` byte-for-byte equals the input —

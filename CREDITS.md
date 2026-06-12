@@ -13,7 +13,7 @@ need to be listed.
 | Source | License | What we adapted | Where in `src/` |
 | ------ | ------- | --------------- | --------------- |
 | [WHATWG HTML5 spec, §13.2.5 "Tokenization"](https://html.spec.whatwg.org/multipage/parsing.html#tokenization) | Public domain (W3C/WHATWG copyright with permissive license terms) | The state-machine structure of the HTML5 tokenizer (state names, transition rules, error codes). Each state in `Tokenizer.php` mirrors a numbered subsection of §13.2.5. The implementation is a parallel write from spec, not a port from any existing tokenizer. | `Internal/Tokenizer/` |
-| WHATWG named-character-reference list (subset) | Public domain spec data | Seed table of ~30 common named entities (`&amp;`, `&lt;`, `&copy;`, etc.) plus the C1-control numeric-replacement table. Full ~2200-entry table will be backfilled in M1.B. | `Internal/Tokenizer/Entities.php` |
+| [WHATWG named-character-reference list](https://html.spec.whatwg.org/entities.json) | Public domain spec data | The full 2231-entry named-entity table, vendored verbatim as `resources/entities.json` and codegen'd into PHP by `bin/generate-entities.php`, plus the C1-control numeric-replacement table. | `Internal/Tokenizer/NamedCharacterReferences.php` (generated), `Internal/Tokenizer/Entities.php` |
 
 ## Reference projects studied (not necessarily adapted)
 

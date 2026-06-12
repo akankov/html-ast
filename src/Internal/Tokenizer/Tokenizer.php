@@ -1285,6 +1285,21 @@ final class Tokenizer
         return true;
     }
 
+    /**
+     * Whether the pending character reference is being consumed "as part of
+     * an attribute" in the WHATWG sense (§13.2.5.72) — i.e. the tokenizer
+     * will flush it into an attribute value rather than character data.
+     */
+    private function isAttributeReturnState(): bool
+    {
+        return match ($this->returnState) {
+            TokenizerState::AttributeValueDoubleQuoted,
+            TokenizerState::AttributeValueSingleQuoted,
+            TokenizerState::AttributeValueUnquoted => true,
+            default => false,
+        };
+    }
+
     private function stateCharacterReference(): bool
     {
         $c = $this->consume();
@@ -1311,6 +1326,30 @@ final class Tokenizer
             if ($match !== null) {
                 $rawSlice = substr($this->input, $ampOffset, $match['consumed']);
                 $this->pos = $ampOffset + $match['consumed'];
+                $endsWithSemicolon = str_ends_with($rawSlice, ';');
+                $next = $this->input[$this->pos] ?? null;
+
+                // WHATWG §13.2.5.73: a legacy (semicolon-less) match inside an
+                // attribute value followed by `=` or an alphanumeric is NOT
+                // decoded, for historical reasons (`?a=1&copy=2` keeps `&copy`).
+                if (
+                    !$endsWithSemicolon
+                    && $this->isAttributeReturnState()
+                    && ($next === '=' || ($next !== null && AsciiPredicates::isAsciiAlphanumeric($next)))
+                ) {
+                    $this->appendInReturnState($rawSlice, $rawSlice);
+                    $this->state = $this->returnState;
+
+                    return true;
+                }
+
+                if (!$endsWithSemicolon) {
+                    $this->emitError(
+                        'missing-semicolon-after-character-reference',
+                        'missing-semicolon-after-character-reference',
+                    );
+                }
+
                 $this->appendInReturnState($rawSlice, $match['decoded']);
                 $this->state = $this->returnState;
 
